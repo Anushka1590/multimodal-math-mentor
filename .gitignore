@@ -1,0 +1,10 @@
+venv/
+.env
+data/
+__pycache__/
+*.pyc
+*.bin
+*.pkl
+.streamlit/secrets.toml
+test_setup.py
+test_alpha.py

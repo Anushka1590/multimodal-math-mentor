@@ -1,0 +1,10 @@
+streamlit
+groq
+google-genai
+faiss-cpu
+sentence-transformers
+python-dotenv
+numpy
+Pillow
+soundfile
+sympy

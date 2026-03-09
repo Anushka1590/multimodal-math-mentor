@@ -97,11 +97,22 @@ left_col, right_col = st.columns([1.2, 1], gap="large")
 with left_col:
     st.subheader("📥 Input")
 
+    prev_mode  = st.session_state.get("input_mode", None)
     input_mode = st.radio(
         "Select input mode:",
         ["✏️ Text", "🖼️ Image", "🎙️ Audio"],
         horizontal=True
     )
+
+    # Clear results when input mode changes
+    if prev_mode and prev_mode != input_mode:
+        st.session_state.result          = None
+        st.session_state.memory_id       = None
+        st.session_state.raw_input       = ""
+        st.session_state.extracted_text  = ""
+        st.session_state.input_confirmed = False
+
+    st.session_state.input_mode = input_mode
 
     # ── TEXT INPUT ────────────────────────────────────────────────────────────
     if input_mode == "✏️ Text":
@@ -111,8 +122,13 @@ with left_col:
             height=120
         )
         if text_input:
-            st.session_state.raw_input      = text_input
-            st.session_state.extracted_text = text_input
+            # Clear previous result when new problem is typed
+            if text_input != st.session_state.get("last_input", ""):
+                st.session_state.result    = None
+                st.session_state.memory_id = None
+            st.session_state.last_input      = text_input
+            st.session_state.raw_input       = text_input
+            st.session_state.extracted_text  = text_input
             st.session_state.input_confirmed = True
 
     # ── IMAGE INPUT ───────────────────────────────────────────────────────────
@@ -248,6 +264,17 @@ with right_col:
         verification = result["verification"]
         explanation  = result["explanation"]
 
+        # ── MEMORY REUSE INDICATOR ────────────────────────────────────────────
+        memory_used = result.get("memory_used", [])
+        if memory_used:
+            st.success(f"🧠 Memory reused {len(memory_used)} verified past solution(s) to guide this answer")
+            with st.expander("📝 Past solutions used", expanded=False):
+                for m in memory_used:
+                    st.markdown(f"""<div class='memory-box'>
+                        <b>#{m['id']} [{m['topic'].upper()}]</b> {m['problem_text'][:80]}...<br>
+                        <small>Feedback: ✅ correct | Similarity: {m['similarity_score']:.3f}</small>
+                    </div>""", unsafe_allow_html=True)
+
         # ── AGENT TRACE ───────────────────────────────────────────────────────
         with st.expander("🔍 Agent Trace", expanded=False):
             agents_trace = [
@@ -323,10 +350,18 @@ with right_col:
                     update_feedback(st.session_state.memory_id, "incorrect")
                 st.error("Sorry! Marked as incorrect ❌")
 
-        comment = st.text_input("Optional comment:")
-        if comment:
-            st.caption(f"Comment noted: {comment}")
-
+        comment = st.text_input("Optional comment (e.g. correct answer is 40):")
+        if comment and st.session_state.memory_id:
+            if st.button("💾 Save Comment"):
+                from memory import update_feedback
+                memories = __import__('memory').load_memory()
+                for m in memories:
+                    if m["id"] == st.session_state.memory_id:
+                        m["comment"]          = comment
+                        m["corrected_answer"] = comment
+                        break
+                __import__('memory').save_memory(memories)
+                st.success("Comment saved — will be used as reference for similar problems ✅")
 
 # ════════════════════════════════════════════════════════════════════════════
 # SIDEBAR — Memory Summary

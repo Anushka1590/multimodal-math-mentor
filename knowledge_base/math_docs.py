@@ -515,5 +515,41 @@ For local max/min problems with log:
 - At critical point where ln term vanishes (argument = 1), answer is often clean integer
 - Always check if ln(1) = 0 simplifies the answer to exact integer
 """
+    },
+    {
+        "id": "calc_008",
+        "topic": "calculus",
+        "title": "Implicit Differentiation with Sympy - Code Template",
+        "content": """
+For implicit differentiation problems using sympy:
+
+EXACT CODE TEMPLATE:
+x = symbols('x')
+y = Function('y')
+# Define equation
+eq = ln(x + y(x)) - 4*x*y(x)
+# First derivative
+dy = dsolve or use idiff
+# Better approach: use sp.idiff
+import sympy as sp
+x, y = sp.symbols('x y')
+eq = sp.ln(x + y) - 4*x*y
+# First implicit derivative dy/dx
+dydx = sp.idiff(eq, y, x)
+# Second implicit derivative d2y/dx2
+d2ydx2 = sp.idiff(eq, y, x, 2)
+# Find y at x=0 first: ln(0+y) = 0 => y=1
+y_at_0 = sp.solve(eq.subs(x, 0), y)[0]
+# Evaluate first derivative at x=0
+dydx_at_0 = dydx.subs([(x, 0), (y, y_at_0)])
+# Evaluate second derivative at x=0
+d2y_at_0 = d2ydx2.subs([(x, 0), (y, y_at_0)])
+print(f"y at x=0: {y_at_0}")
+print(f"dy/dx at x=0: {dydx_at_0}")
+print(f"d2y/dx2 at x=0: {d2y_at_0}")
+
+Key: always find y value at given x first, then substitute both x and y.
+sp.idiff(equation, y, x) handles implicit differentiation exactly.
+"""
     }
 ]

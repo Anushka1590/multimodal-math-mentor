@@ -19,6 +19,67 @@ def call_llm(system_prompt: str, user_message: str) -> str:
     )
     return response.choices[0].message.content.strip()
 
+    def solve_implicit_differentiation(problem_text: str, equation_str: str, x_val: float) -> str:
+        """
+        Solves implicit differentiation exactly using sympy idiff.
+        """
+        import sympy as sp
+        try:
+            x, y = sp.symbols('x y')
+
+            # Ask LLM to convert problem to sympy equation string only
+            eq_prompt = f"""Convert this math equation to a sympy expression equal to zero.
+    Problem: {problem_text}
+    Equation hint: {equation_str}
+
+    Rules:
+    - Use x and y as variables
+    - Move everything to left side (= 0)
+    - Use sp.ln() for natural log
+    - Use sp.sin, sp.cos, sp.exp etc
+    - Return ONLY the sympy expression, nothing else
+    - Example: for ln(x+y) = 4xy return: sp.ln(x+y) - 4*x*y
+
+    Return the expression only, no code, no explanation."""
+
+            eq_str = call_llm("Return sympy expression only.", eq_prompt).strip()
+            eq_str = eq_str.replace("```", "").strip()
+
+            # Safe eval of equation
+            namespace = {
+                "sp": sp, "x": x, "y": y,
+                "ln": sp.ln, "log": sp.ln,
+                "sin": sp.sin, "cos": sp.cos,
+                "tan": sp.tan, "exp": sp.exp,
+                "sqrt": sp.sqrt
+            }
+            eq = eval(eq_str, namespace)
+
+            # Find y at x=x_val
+            y_val = sp.solve(eq.subs(x, x_val), y)
+            if not y_val:
+                return f"Could not find y at x={x_val}"
+            y_val = y_val[0]
+
+            # Compute derivatives using idiff
+            dydx    = sp.idiff(eq, y, x)
+            d2ydx2  = sp.idiff(eq, y, x, 2)
+
+            dydx_at  = dydx.subs([(x, x_val), (y, y_val)])
+            d2y_at   = d2ydx2.subs([(x, x_val), (y, y_val)])
+
+            dydx_simplified  = sp.nsimplify(sp.re(dydx_at))
+            d2y_simplified   = sp.nsimplify(sp.re(d2y_at))
+
+            return (
+                f"y at x={x_val}: {y_val}\n"
+                f"dy/dx at x={x_val}: {dydx_simplified}\n"
+                f"d2y/dx2 at x={x_val}: {d2y_simplified}"
+            )
+
+        except Exception as e:
+            return f"Implicit diff error: {str(e)}"
+
 
 # ── AGENT 1: Parser Agent ────────────────────────────────────────────────────
 def parser_agent(raw_input: str) -> dict:
@@ -109,168 +170,281 @@ Return ONLY the JSON, no explanation, no markdown.
 
 
 # ── AGENT 3: Solver Agent ────────────────────────────────────────────────────
-def solver_agent(parsed_problem: dict, routing_info: dict) -> dict:
+def solver_agent(parsed_problem: dict, routing_info: dict, memory_context: str = "") -> dict:
     """
-    Solves the problem using RAG context + Python calculator for exact arithmetic.
+    Hybrid solver: Wolfram Alpha for calculus/algebra,
+    Python calculator for probability/combinations,
+    Sympy as fallback.
     """
     from calculator import execute_math_code
+    from wolfram_solver import query_wolfram, format_for_wolfram
 
     query        = parsed_problem["problem_text"]
+    topic        = routing_info.get("topic", "general")
+    subtopic     = routing_info.get("subtopic", "")
     context_docs = retrieve(query, top_k=3)
     context_text = "\n\n".join([
         f"[{d['title']}]\n{d['content']}" for d in context_docs
     ])
 
-    # ── Step 1: Ask LLM to write Python code to solve it ─────────────────────
-    code_prompt = f"""You are an expert JEE math solver.
-Write Python code using sympy to solve this problem EXACTLY and symbolically.
+    wolfram_context = ""
+    calc_context    = ""
+    generated_code  = ""
+    calc_output     = ""
 
-AVAILABLE TOOLS (no imports needed, all ready to use):
+    # ── Route to best computation tool ───────────────────────────────────────
 
-SYMPY SYMBOLIC MATH (use these for calculus, algebra, equations):
-- symbols('x')          — declare symbolic variable
-- diff(expr, x)         — derivative of expression
-- diff(expr, x, 2)      — second derivative
-- solve(expr, x)        — solve equation = 0
-- solve([eq1,eq2],[x,y])— solve system of equations
-- integrate(expr, x)    — indefinite integral
-- integrate(expr,(x,a,b))— definite integral
-- limit(expr, x, val)   — compute limit
-- simplify(expr)        — simplify expression
-- factor(expr)          — factor expression
-- ln(x)                 — natural log (sympy)
-- Abs(x)                — absolute value (sympy)
-- Rational(a,b)         — exact fraction a/b
-- sqrt_sp(x)            — symbolic square root
-- oo                    — infinity
-- Matrix([[a,b],[c,d]]) — create matrix
-- det([[a,b],[c,d]])    — determinant
+    query_lower = query.lower()
 
-NUMERIC MATH (use for combinations, probability):
-- comb(n,r), perm(n,r), factorial(n)
-- Fraction(a,b)         — exact fraction
+    # Force sympy for implicit differentiation
+    is_implicit = (
+        any(k in query_lower for k in [
+            "d2y", "d^2y", "dy/dx", "y''",
+            "find d2y", "find dy/dx",
+            "implicit differentiation"
+        ]) or (
+            any(k in query_lower for k in ["ln(x+y)", "log(x+y)", "loge(x+y)"]) and
+            any(k in query_lower for k in ["dy", "d2y", "derivative of y", "at x="])
+        )
+    )
 
-CRITICAL RULES:
-- Use sympy (sp, symbols, diff, solve) for ALL calculus and algebra problems
-- Use comb/Fraction for ALL probability and combinations problems
-- Always print final answer with print()
-- For decimals from sympy: use float(answer) to convert
-- For exact fractions from sympy: use sp.Rational or keep symbolic
-- Never use numerical search loops — use solve() instead
-- No import statements needed
-- Return ONLY raw Python code, no markdown
+    # ── Handle implicit differentiation directly ──────────────────────────
+    if is_implicit and "parabola" not in query_lower and "closest" not in query_lower and "distance" not in query_lower:
+        import re
+        # Extract x value from problem
+        x_match = re.search(r'at x\s*=\s*(-?\d+\.?\d*)', query_lower)
+        x_val   = float(x_match.group(1)) if x_match else 0.0
+
+        implicit_result = solve_implicit_differentiation(
+            query, query, x_val
+        )
+
+        context_docs = retrieve(query, top_k=3)
+        context_text = "\n\n".join([
+            f"[{d['title']}]\n{d['content']}" for d in context_docs
+        ])
+
+        system = f"""You are an expert JEE math solver.
+Use the exact computation result below to write the solution.
+
+COMPUTATION RESULT (100% correct):
+{implicit_result}
 
 REFERENCE MATERIAL:
 {context_text}
 
-CRITICAL DISTRIBUTION SELECTION RULES:
-- Sampling WITHOUT replacement from finite population → Hypergeometric
+Use the exact values from computation result. Show method clearly.
+"""
+        solution = call_llm(system, f"Problem: {query}\n\nExplain the solution.")
+
+        return {
+            "solution":       solution,
+            "sources_used":   [d["title"] for d in context_docs],
+            "context_docs":   context_docs,
+            "generated_code": f"sp.idiff() used directly",
+            "calc_output":    implicit_result
+        }
+
+    use_wolfram = not is_implicit and (
+        any(k in topic.lower() for k in ["calculus", "algebra"]) or
+        any(k in subtopic.lower() for k in [
+            "derivative", "integral", "limit", "maximum", "minimum",
+            "roots", "equation", "differentiation", "optimization",
+            "decreasing", "increasing", "critical"
+        ])
+    )
+
+    use_calculator = is_implicit or any(k in topic.lower() for k in [
+        "probability", "combinatorics"
+    ]) or any(k in subtopic.lower() for k in [
+        "combination", "permutation", "probability",
+        "distribution", "variance", "expectation",
+        "hypergeometric", "binomial", "committee",
+        "implicit", "second derivative"
+    ])
+    use_calculator = any(k in topic.lower() for k in [
+        "probability", "combinatorics"
+    ]) or any(k in subtopic.lower() for k in [
+        "combination", "permutation", "probability",
+        "distribution", "variance", "expectation",
+        "hypergeometric", "binomial", "committee"
+    ])
+
+    # ── Tool 1: Wolfram Alpha ─────────────────────────────────────────────────
+    if use_wolfram:
+        wolfram_query  = format_for_wolfram(query)
+        wolfram_result = query_wolfram(wolfram_query)
+
+        if wolfram_result["success"] and wolfram_result["answer"]:
+            all_results = wolfram_result["all_results"]
+            context_str = "\n".join([
+                f"[{r['title']}]: {r['content'][:200]}"
+                for r in all_results[:5]
+            ])
+            wolfram_context = f"""
+WOLFRAM ALPHA COMPUTATION RESULT (100% mathematically correct):
+Answer: {wolfram_result['answer']}
+
+All computation results:
+{context_str}
+"""
+        else:
+            # Fallback to sympy if Wolfram fails
+            use_wolfram    = False
+            use_calculator = True
+
+    # ── Tool 2: Python Calculator + Sympy ────────────────────────────────────
+    if use_calculator or not use_wolfram:
+        code_prompt = f"""You are an expert JEE math solver.
+Write Python code to solve this problem EXACTLY and print the final answer.
+
+AVAILABLE TOOLS (no imports needed):
+
+SYMPY (for calculus and algebra):
+- symbols('x')           — declare variable
+- diff(expr, x)          — derivative
+- diff(expr, x, 2)       — second derivative
+- solve(expr, x)         — solve equation
+- integrate(expr, x)     — integral
+- limit(expr, x, val)    — limit
+- simplify(expr)         — simplify
+- ln(x), Abs(x)          — log and absolute value
+- Rational(a,b)          — exact fraction
+- sp.re(expr)            — real part only
+- sympy available as both 'sp' and 'sympy'
+
+NUMERIC (for probability):
+- comb(n,r), perm(n,r), factorial(n)
+- Fraction(a,b)          — exact fraction
+
+RULES:
+- Use Fraction() for probability answers
+- Use sympy for calculus/algebra
+- Always print final answer clearly
+- After sympy computation: clean with sp.re(sp.simplify(answer))
+- No imports needed
+- Raw code only, no markdown
+
+CRITICAL DISTRIBUTION RULES:
+- Sampling WITHOUT replacement → Hypergeometric
   Var(X) = n*(K/N)*(1-K/N)*(N-n)/(N-1)
 - Sampling WITH replacement → Binomial
   Var(X) = n*p*(1-p)
 
 CRITICAL CALCULUS RULES:
-- For strictly decreasing intervals with absolute value like |t+1|/t^2:
-  Split into cases manually, do NOT rely on solve(f'<0) for abs functions
-  Case 1: t < -1: substitute |t+1| = -(t+1), differentiate, find where f'<0
-  Case 2: -1 < t < 0: substitute |t+1| = (t+1), differentiate, find where f'<0
-  Combine to get largest interval, match with given interval notation to find alpha
+- For absolute value functions: split into cases manually
+- For interval (2*alpha, alpha): solve both endpoints
+- After computing: clean imaginary parts with sp.re(sp.simplify(result))
 
-- For interval (2*alpha, alpha): solve 2*alpha = left_end AND alpha = right_end
-  Example: if decreasing on (-2,-1), then alpha=-1 since 2*(-1)=-2 ✓
-
-- For local max/min: use diff(), solve(diff==0), substitute back
-- ln(1) = 0 always — if critical point gives ln(1), answer is clean integer
-- Never hardcode alpha — always derive it from the interval analysis
-- After computing final answer with sympy, always clean it with:
-  final = sp.re(sp.simplify(answer))
-  print(int(final) if final == int(final) else final)
-
-Problem: {query}
-Topic: {routing_info['topic']} / {routing_info['subtopic']}
-Strategy: {routing_info['strategy']}
-
-Write sympy code to solve this exactly. Print the final answer clearly.
-"""
-
-    code = call_llm(
-        "You write clean Python math code. Return raw code only, absolutely no markdown fences, no explanation.",
-        code_prompt
-    )
-
-    # Clean any markdown fences if LLM adds them
-    code = code.strip()
-    if "```python" in code:
-        code = code.split("```python")[1].split("```")[0].strip()
-    elif "```" in code:
-        code = code.split("```")[1].split("```")[0].strip()
-
-    # ── Step 2: Execute the code ──────────────────────────────────────────────
-    calc_result = execute_math_code(code)
-
-    if calc_result["success"] and calc_result["output"]:
-        calc_context = f"""
-EXACT PYTHON CALCULATION RESULT (these numbers are 100% correct):
-{calc_result['output']}
-
-Python code that produced this:
-{code}
-"""
-    else:
-        # If code failed, try once more with error feedback
-        retry_prompt = f"""Your previous code had an error: {calc_result['error']}
-Fix and rewrite the Python code to solve:
-{query}
-Return raw code only, no markdown, no imports."""
-
-        code = call_llm("Fix this Python math code. Return raw code only.", retry_prompt)
-        code = code.strip()
-        if "```python" in code:
-            code = code.split("```python")[1].split("```")[0].strip()
-        elif "```" in code:
-            code = code.split("```")[1].split("```")[0].strip()
-
-        calc_result = execute_math_code(code)
-        if calc_result["success"] and calc_result["output"]:
-            calc_context = f"""
-EXACT PYTHON CALCULATION RESULT (these numbers are 100% correct):
-{calc_result['output']}
-
-Python code that produced this:
-{code}
-"""
-        else:
-            calc_context = "Calculator could not solve this. Solve carefully step by step showing all arithmetic."
-
-    # ── Step 3: Ask LLM to explain using exact results ────────────────────────
-    system = f"""You are an expert JEE math solver.
-Use the reference material and exact calculation result below.
+CRITICAL IMPLICIT DIFFERENTIATION RULES:
+- ALWAYS use sp.idiff() for implicit differentiation
+- NEVER include x_value or x_val as variable names in code
+- NEVER copy template placeholders literally
+- Substitute actual numbers directly, example:
+  x, y = sp.symbols('x y')
+  eq = sp.ln(x + y) - 4*x*y
+  y_val = sp.solve(eq.subs(x, 0), y)[0]
+  dydx = sp.idiff(eq, y, x)
+  d2ydx2 = sp.idiff(eq, y, x, 2)
+  ans = d2ydx2.subs([(x, 0), (y, y_val)])
+  print(sp.nsimplify(sp.re(ans)))
+- NEVER use sp.Function('y')
+- ALWAYS use plain sp.symbols('x y')
 
 REFERENCE MATERIAL:
 {context_text}
 
-{calc_context}
+Problem: {query}
+Topic: {topic} / {subtopic}
+Strategy: {routing_info.get('strategy', '')}
 
-Instructions:
-- The EXACT PYTHON CALCULATION RESULT above is correct, use those numbers directly
+Write code to solve exactly. Print final answer.
+"""
+        generated_code = call_llm(
+            "Write clean Python math code. Raw code only, no markdown.",
+            code_prompt
+        )
+
+        # Clean markdown fences
+        generated_code = generated_code.strip()
+        if "```python" in generated_code:
+            generated_code = generated_code.split("```python")[1].split("```")[0].strip()
+        elif "```" in generated_code:
+            generated_code = generated_code.split("```")[1].split("```")[0].strip()
+
+        # Execute code
+        calc_result = execute_math_code(generated_code)
+
+        if calc_result["success"] and calc_result["output"]:
+            calc_output  = calc_result["output"]
+            calc_context = f"""
+EXACT PYTHON CALCULATION RESULT:
+{calc_output}
+"""
+        else:
+            # Retry once with error feedback
+            retry_prompt = f"""Previous code had error: {calc_result['error']}
+Fix and rewrite Python code for: {query}
+Raw code only, no markdown, no imports."""
+
+            generated_code = call_llm(
+                "Fix Python math code. Raw code only.", retry_prompt
+            )
+            generated_code = generated_code.strip()
+            if "```python" in generated_code:
+                generated_code = generated_code.split("```python")[1].split("```")[0].strip()
+            elif "```" in generated_code:
+                generated_code = generated_code.split("```")[1].split("```")[0].strip()
+
+            calc_result = execute_math_code(generated_code)
+            if calc_result["success"] and calc_result["output"]:
+                calc_output  = calc_result["output"]
+                calc_context = f"""
+EXACT PYTHON CALCULATION RESULT:
+{calc_output}
+"""
+            else:
+                calc_context = "Calculator unavailable. Solve carefully step by step."
+
+    # ── Final explanation by LLM ──────────────────────────────────────────────
+    computation_result = wolfram_context if wolfram_context else calc_context
+
+    memory_section = f"""
+VERIFIED PAST SOLUTIONS FROM MEMORY (use these as reference for method):
+{memory_context}
+""" if memory_context else ""
+
+    system = f"""You are an expert JEE math solver.
+Use the reference material and computation result below to write the solution.
+
+REFERENCE MATERIAL:
+{context_text}
+
+{memory_section}
+
+{computation_result}
+
+INSTRUCTIONS:
+- The computation result above is 100% correct — use those exact numbers
+- If verified past solutions are provided, follow the same method
 - Show the method and reasoning clearly
 - State the final answer using the exact computed value
-- Do not redo arithmetic, trust the calculator output
+- Do not redo arithmetic — trust the computation result
+- Be concise but complete
 """
 
     solution = call_llm(
         system,
-        f"Problem: {query}\n\nWrite the full solution using the exact results above."
+        f"Problem: {query}\n\nWrite the complete solution using the exact results above."
     )
 
     return {
         "solution":       solution,
         "sources_used":   [d["title"] for d in context_docs],
         "context_docs":   context_docs,
-        "generated_code": code,
-        "calc_output":    calc_result.get("output", "")
+        "generated_code": generated_code,
+        "calc_output":    calc_output if calc_output else (wolfram_result.get("answer", "") if 'wolfram_result' in dir() else "")
     }
-
 
 # ── AGENT 4: Verifier Agent ──────────────────────────────────────────────────
 def verifier_agent(parsed_problem: dict, solution_data: dict) -> dict:
@@ -369,33 +543,117 @@ Create a student-friendly explanation."""
 
     return call_llm(system, user_msg)
 
+def solve_implicit_differentiation(problem_text: str, equation_str: str, x_val: float) -> str:
+    """
+    Solves implicit differentiation exactly using sympy idiff.
+    """
+    import sympy as sp
+    try:
+        x, y = sp.symbols('x y')
+
+        # Ask LLM to convert problem to sympy equation string only
+        eq_prompt = f"""Convert this math equation to a sympy expression equal to zero.
+Problem: {problem_text}
+Equation hint: {equation_str}
+
+Rules:
+- Use x and y as variables
+- Move everything to left side (= 0)
+- Use sp.ln() for natural log
+- Use sp.sin, sp.cos, sp.exp etc
+- Return ONLY the sympy expression, nothing else
+- Example: for ln(x+y) = 4xy return: sp.ln(x+y) - 4*x*y
+
+Return the expression only, no code, no explanation."""
+
+        eq_str = call_llm("Return sympy expression only.", eq_prompt).strip()
+        eq_str = eq_str.replace("```", "").strip()
+
+        # Safe eval of equation
+        namespace = {
+            "sp": sp, "x": x, "y": y,
+            "ln": sp.ln, "log": sp.ln,
+            "sin": sp.sin, "cos": sp.cos,
+            "tan": sp.tan, "exp": sp.exp,
+            "sqrt": sp.sqrt
+        }
+        eq = eval(eq_str, namespace)
+
+        # Find y at x=x_val
+        y_val = sp.solve(eq.subs(x, x_val), y)
+        if not y_val:
+            return f"Could not find y at x={x_val}"
+        y_val = y_val[0]
+
+        # Compute derivatives using idiff
+        dydx    = sp.idiff(eq, y, x)
+        d2ydx2  = sp.idiff(eq, y, x, 2)
+
+        dydx_at  = dydx.subs([(x, x_val), (y, y_val)])
+        d2y_at   = d2ydx2.subs([(x, x_val), (y, y_val)])
+
+        dydx_simplified  = sp.nsimplify(sp.re(dydx_at))
+        d2y_simplified   = sp.nsimplify(sp.re(d2y_at))
+
+        return (
+            f"y at x={x_val}: {y_val}\n"
+            f"dy/dx at x={x_val}: {dydx_simplified}\n"
+            f"d2y/dx2 at x={x_val}: {d2y_simplified}"
+        )
+
+    except Exception as e:
+        return f"Implicit diff error: {str(e)}"
+
 
 # ── Master Pipeline ───────────────────────────────────────────────────────────
 def run_pipeline(raw_input: str) -> dict:
     """
     Runs all 5 agents in sequence and returns the full result.
+    Incorporates memory of similar past problems.
     """
+    from memory import retrieve_similar
+
     print("\n[1/5] Parser Agent running...")
-    parsed       = parser_agent(raw_input)
+    parsed  = parser_agent(raw_input)
 
     print("[2/5] Intent Router Agent running...")
-    routing      = intent_router_agent(parsed)
+    routing = intent_router_agent(parsed)
+
+    # ── Check memory for similar verified problems ────────────────────────
+    similar = retrieve_similar(raw_input, top_k=2)
+    verified_similar = [
+        s for s in similar
+        if s.get("feedback") == "correct"
+        and s.get("similarity_score", 999) < 0.5
+    ]
+
+    memory_context = ""
+    if verified_similar:
+        print(f"[Memory] Found {len(verified_similar)} similar verified problem(s) — using as reference")
+        memory_context = "\n\n".join([
+            f"VERIFIED PAST SOLUTION (marked correct by user):\n"
+            f"Problem: {s['problem_text']}\n"
+            f"Solution: {s['solution']}\n"
+            f"Topic: {s['topic']}"
+            for s in verified_similar
+        ])
 
     print("[3/5] Solver Agent running...")
-    solution     = solver_agent(parsed, routing)
+    solution = solver_agent(parsed, routing, memory_context=memory_context)
 
     print("[4/5] Verifier Agent running...")
     verification = verifier_agent(parsed, solution)
 
     print("[5/5] Explainer Agent running...")
-    explanation  = explainer_agent(parsed, solution, verification)
+    explanation = explainer_agent(parsed, solution, verification)
 
     return {
-        "parsed_problem": parsed,
-        "routing_info":   routing,
-        "solution_data":  solution,
-        "verification":   verification,
-        "explanation":    explanation
+        "parsed_problem":  parsed,
+        "routing_info":    routing,
+        "solution_data":   solution,
+        "verification":    verification,
+        "explanation":     explanation,
+        "memory_used":     verified_similar
     }
 
 

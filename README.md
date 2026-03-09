@@ -56,19 +56,19 @@ graph TD
 ```
 
 ## Features
-- **Multimodal Input** — Text, Image (OCR via Groq Vision), Audio (Whisper ASR)
-- **5-Agent Pipeline** — Parser, Intent Router, Solver, Verifier, Explainer
-- **Hybrid Computation** — Wolfram Alpha for calculus/algebra, Python for probability, Sympy for implicit differentiation
-- **RAG** — 22-document curated knowledge base with FAISS vector search
-- **Human-in-the-Loop** — triggers on low confidence or ambiguous input
-- **Real Memory Learning** — reuses verified correct past solutions for similar problems
-- **Feedback System** — mark correct/incorrect, save corrections
+- **Multimodal Input** - Text, Image (OCR via Groq Vision), Audio (Whisper ASR)
+- **5-Agent Pipeline** - Parser, Intent Router, Solver, Verifier, Explainer
+- **Hybrid Computation** - Wolfram Alpha for calculus/algebra, Python for probability, Sympy for implicit differentiation
+- **RAG** - 24-document curated knowledge base with FAISS vector search
+- **Human-in-the-Loop** - triggers on low confidence or ambiguous input
+- **Real Memory Learning** - reuses verified correct past solutions for similar problems
+- **Feedback System** - mark correct/incorrect, save corrections
 
 ## Tech Stack
 
 | Component | Tool |
 |---|---|
-| LLM | Groq (LLaMA 3.3 70B) — Free |
+| LLM | Groq (LLaMA 3.3 70B) |
 | Image OCR | Groq Vision (LLaMA 4 Scout) |
 | Audio ASR | Groq Whisper Large V3 |
 | Computation | Wolfram Alpha API |
@@ -79,11 +79,11 @@ graph TD
 | Memory | FAISS + JSON |
 
 ## Agents
-1. **Parser Agent** — Cleans OCR/ASR output, structures problem, detects ambiguity
-2. **Intent Router Agent** — Classifies topic and decides solution strategy
-3. **Solver Agent** — Hybrid: Wolfram Alpha + Python Calculator + Sympy
-4. **Verifier Agent** — Checks correctness, domain constraints, triggers HITL if confidence < 80%
-5. **Explainer Agent** — Produces student-friendly step-by-step explanation
+1. **Parser Agent** - Cleans OCR/ASR output, structures problem, detects ambiguity
+2. **Intent Router Agent** - Classifies topic and decides solution strategy
+3. **Solver Agent** - Hybrid: Wolfram Alpha + Python Calculator + Sympy
+4. **Verifier Agent** - Checks correctness, domain constraints, triggers HITL if confidence < 80%
+5. **Explainer Agent** - Produces student-friendly step-by-step explanation
 
 ## Math Topics Covered
 - Algebra (quadratics, polynomials, sequences, complex numbers)

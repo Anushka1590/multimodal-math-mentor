@@ -1,4 +1,4 @@
-# 🧮 Math Mentor
+# Math Mentor
 An end-to-end AI application that solves JEE-level math problems using RAG + Multi-Agent System + Memory + Human-in-the-Loop.
 
 ## Live Demo

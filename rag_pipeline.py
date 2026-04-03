@@ -54,12 +54,3 @@ def retrieve(query: str, top_k: int = 3) -> list[dict]:
         doc["score"] = float(distances[0][i])
         results.append(doc)
     return results
-
-# ── Test ─────────────────────────────────────────────────
-if __name__ == "__main__":
-    build_index()
-    print("\n--- Test Retrieval ---")
-    results = retrieve("how to find roots of quadratic equation", top_k=3)
-    for r in results:
-        print(f"\n[{r['topic'].upper()}] {r['title']}  (score={r['score']:.2f})")
-        print(r['content'][:150], "...")

@@ -655,19 +655,3 @@ def run_pipeline(raw_input: str) -> dict:
         "explanation":     explanation,
         "memory_used":     verified_similar
     }
-
-
-# ── Quick Test ────────────────────────────────────────────────────────────────
-if __name__ == "__main__":
-    test_problem = "The probability of forming a 12 persons committee from 4 engineers, 2 doctors and 10 professors containing at least 3 engineers and at least 1 doctor"
-    result = run_pipeline(test_problem)
-
-    print("\n" + "="*60)
-    print("GENERATED CODE:")
-    print(result["solution_data"].get("generated_code", "N/A"))
-
-    print("\nCALCULATOR OUTPUT:")
-    print(result["solution_data"].get("calc_output", "N/A"))
-
-    print("\nFINAL EXPLANATION:")
-    print(result["explanation"])

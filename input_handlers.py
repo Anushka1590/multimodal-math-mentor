@@ -171,18 +171,6 @@ def fix_math_phrases(text: str) -> str:
 
     return result
 
-
-# ── TEST ─────────────────────────────────────────────────────────────────────
-if __name__ == "__main__":
-    # Test math phrase fixer
-    print("Testing math phrase fixer...")
-    test_phrases = [
-        "find the square root of x squared plus y squared",
-        "x raised to the power 3 plus 2x equals 0",
-        "the integral of x squared divided by x plus 1",
-    ]
-    for phrase in test_phrases:
-        fixed = fix_math_phrases(phrase)
         print(f"  Input : {phrase}")
         print(f"  Output: {fixed}")
         print()

@@ -77,6 +77,7 @@ def execute_math_code(code: str) -> dict:
         "None":      None,
     }
 
+    
     try:
         exec(code, namespace)
         output = buffer.getvalue()

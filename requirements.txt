@@ -12,3 +12,4 @@ requests
 wolframalpha
 langchain
 langchain_community
+langchain-huggingface

@@ -72,7 +72,7 @@ for key, default in {
         st.session_state[key] = default
 
 st.title("🧮 Math Mentor")
-st.caption("JEE-level Math Problem Solver — RAG + Multi-Agent + Memory")
+st.caption("JEE-level Math Problem Solver - RAG + Multi-Agent + Memory")
 st.divider()
 
 left_col, right_col = st.columns([1.2, 1], gap="large")

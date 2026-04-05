@@ -169,11 +169,11 @@ def fix_math_phrases(text: str) -> str:
     for phrase, symbol in replacements.items():
         result = result.replace(phrase, symbol)
 
-    return result
+    print(f"  Input : {phrase}")
+    print(f"  Output: {fixed}")
+    print()
 
-        print(f"  Input : {phrase}")
-        print(f"  Output: {fixed}")
-        print()
+    return result
 
     print("Input handlers ready.")
     print("Image and audio processing will be tested via the UI in Step 5.")

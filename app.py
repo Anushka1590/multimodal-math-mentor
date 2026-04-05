@@ -1,30 +1,20 @@
 import os
-import json
 import streamlit as st
 from PIL import Image
-import io
 from dotenv import load_dotenv
 
-from agents import run_pipeline, parser_agent
+from agents import run_pipeline
 from input_handlers import extract_text_from_image, extract_text_from_audio
 from memory import add_memory, retrieve_similar, update_feedback, get_memory_summary
 
-# Build FAISS index on startup if it doesn't exist
-import os
-if not os.path.exists("data/faiss_index.bin"):
+load_dotenv()
+
+if not os.path.exists("data/langchain_faiss_index"):
     from rag_pipeline import build_index
     build_index()
 
-load_dotenv()
+st.set_page_config(page_title="Math Mentor", page_icon="🧮", layout="wide")
 
-# ── Page Config ───────────────────────────────────────────────────────────────
-st.set_page_config(
-    page_title="Math Mentor",
-    page_icon="🧮",
-    layout="wide"
-)
-
-# ── Custom CSS ────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
 .agent-box {
@@ -69,42 +59,30 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-
-# ── Session State Init ────────────────────────────────────────────────────────
 for key, default in {
-    "result":         None,
-    "memory_id":      None,
-    "raw_input":      "",
-    "extracted_text": "",
-    "input_confirmed": False,
-    "solving":        False
+    "result":              None,
+    "memory_id":           None,
+    "raw_input":           "",
+    "extracted_text":      "",
+    "input_confirmed":     False,
+    "solving":             False,
+    "show_correction_box": False
 }.items():
     if key not in st.session_state:
         st.session_state[key] = default
 
-
-# ── Header ────────────────────────────────────────────────────────────────────
 st.title("🧮 Math Mentor")
-st.caption("JEE-level Math Problem Solver - RAG + Multi-Agent + Memory")
+st.caption("JEE-level Math Problem Solver — RAG + Multi-Agent + Memory")
 st.divider()
 
-# ── Layout ────────────────────────────────────────────────────────────────────
 left_col, right_col = st.columns([1.2, 1], gap="large")
 
-# ════════════════════════════════════════════════════════════════════════════
-# LEFT COLUMN — Input + Controls
-# ════════════════════════════════════════════════════════════════════════════
 with left_col:
     st.subheader("📥 Input")
 
     prev_mode  = st.session_state.get("input_mode", None)
-    input_mode = st.radio(
-        "Select input mode:",
-        ["✏️ Text", "🖼️ Image", "🎙️ Audio"],
-        horizontal=True
-    )
+    input_mode = st.radio("Select input mode:", ["✏️ Text", "🖼️ Image", "🎙️ Audio"], horizontal=True)
 
-    # Clear results when input mode changes
     if prev_mode and prev_mode != input_mode:
         st.session_state.result          = None
         st.session_state.memory_id       = None
@@ -114,7 +92,6 @@ with left_col:
 
     st.session_state.input_mode = input_mode
 
-    # ── TEXT INPUT ────────────────────────────────────────────────────────────
     if input_mode == "✏️ Text":
         text_input = st.text_area(
             "Type your math problem:",
@@ -122,7 +99,6 @@ with left_col:
             height=120
         )
         if text_input:
-            # Clear previous result when new problem is typed
             if text_input != st.session_state.get("last_input", ""):
                 st.session_state.result    = None
                 st.session_state.memory_id = None
@@ -131,32 +107,24 @@ with left_col:
             st.session_state.extracted_text  = text_input
             st.session_state.input_confirmed = True
 
-    # ── IMAGE INPUT ───────────────────────────────────────────────────────────
     elif input_mode == "🖼️ Image":
-        uploaded_image = st.file_uploader(
-            "Upload image of math problem (JPG/PNG):",
-            type=["jpg", "jpeg", "png"]
-        )
+        uploaded_image = st.file_uploader("Upload image of math problem (JPG/PNG):", type=["jpg", "jpeg", "png"])
         if uploaded_image:
-            image = Image.open(uploaded_image)
-            st.image(image, caption="Uploaded Image", use_container_width=True)
+            st.image(Image.open(uploaded_image), caption="Uploaded Image", use_container_width=True)
 
             if st.button("🔍 Extract Text from Image"):
                 with st.spinner("Extracting math problem from image..."):
-                    image_bytes = uploaded_image.getvalue()
-                    ocr_result  = extract_text_from_image(image_bytes)
+                    ocr_result = extract_text_from_image(uploaded_image.getvalue())
 
                 if ocr_result["success"]:
                     st.session_state.extracted_text = ocr_result["extracted_text"]
-                    confidence = ocr_result["confidence"]
-                    if confidence < 0.8:
-                        st.warning(f"⚠️ Low confidence ({confidence:.0%}) — please review and edit the extracted text.")
+                    if ocr_result["confidence"] < 0.8:
+                        st.warning(f"⚠️ Low confidence ({ocr_result['confidence']:.0%}) — please review the extracted text.")
                     else:
-                        st.success(f"✅ Extracted with {confidence:.0%} confidence")
+                        st.success(f"✅ Extracted with {ocr_result['confidence']:.0%} confidence")
                 else:
                     st.error(f"❌ Extraction failed: {ocr_result['error']}")
 
-            # Show editable extracted text
             if st.session_state.extracted_text:
                 st.session_state.extracted_text = st.text_area(
                     "📝 Extracted text (edit if needed):",
@@ -168,28 +136,24 @@ with left_col:
                     st.session_state.input_confirmed = True
                     st.success("Text confirmed!")
 
-    # ── AUDIO INPUT ───────────────────────────────────────────────────────────
     elif input_mode == "🎙️ Audio":
-        uploaded_audio = st.file_uploader(
-            "Upload audio file of your math question (WAV/MP3/M4A):",
-            type=["wav", "mp3", "m4a", "ogg"]
-        )
+        uploaded_audio = st.file_uploader("Upload audio file (WAV/MP3/M4A):", type=["wav", "mp3", "m4a", "ogg"])
         if uploaded_audio:
             st.audio(uploaded_audio)
 
             if st.button("🎙️ Transcribe Audio"):
                 with st.spinner("Transcribing audio..."):
-                    audio_bytes = uploaded_audio.getvalue()
-                    ext         = uploaded_audio.name.split(".")[-1]
-                    asr_result  = extract_text_from_audio(audio_bytes, ext)
+                    asr_result = extract_text_from_audio(
+                        uploaded_audio.getvalue(),
+                        uploaded_audio.name.split(".")[-1]
+                    )
 
                 if asr_result["success"]:
                     st.session_state.extracted_text = asr_result["transcript"]
-                    confidence = asr_result["confidence"]
-                    if confidence < 0.8:
-                        st.warning(f"⚠️ Low confidence — please review transcript.")
+                    if asr_result["confidence"] < 0.8:
+                        st.warning("⚠️ Low confidence — please review the transcript.")
                     else:
-                        st.success(f"✅ Transcribed successfully")
+                        st.success("✅ Transcribed successfully")
                 else:
                     st.error(f"❌ Transcription failed: {asr_result['error']}")
 
@@ -206,18 +170,24 @@ with left_col:
 
     st.divider()
 
-    # ── SIMILAR PROBLEMS FROM MEMORY ──────────────────────────────────────────
     if st.session_state.input_confirmed and st.session_state.raw_input:
-        similar = retrieve_similar(st.session_state.raw_input, top_k=2)
-        if similar:
+        similar     = retrieve_similar(st.session_state.raw_input, top_k=2)
+        successful  = similar.get("successful", [])
+        corrections = similar.get("corrections", [])
+
+        if successful or corrections:
             st.subheader("🧠 Similar Problems from Memory")
-            for s in similar:
+            for s in successful:
                 st.markdown(f"""<div class='memory-box'>
                     <b>#{s['id']} [{s['topic'].upper()}]</b> {s['problem_text'][:80]}...<br>
-                    <small>Feedback: {s['feedback']} | Confidence: {s['confidence']:.0%}</small>
+                    <small>✅ Correct | Confidence: {s['confidence']:.0%}</small>
+                </div>""", unsafe_allow_html=True)
+            for s in corrections:
+                st.markdown(f"""<div class='hitl-box'>
+                    <b>#{s['id']} [{s['topic'].upper()}]</b> {s['problem_text'][:80]}...<br>
+                    <small>❌ Was wrong — Correction: {s.get('user_correction', 'N/A')[:60]}</small>
                 </div>""", unsafe_allow_html=True)
 
-    # ── SOLVE BUTTON ──────────────────────────────────────────────────────────
     st.divider()
     solve_clicked = st.button(
         "🚀 Solve Problem",
@@ -228,10 +198,7 @@ with left_col:
 
     if solve_clicked and st.session_state.raw_input:
         with st.spinner("Running agents... this may take 10-20 seconds"):
-            result = run_pipeline(st.session_state.raw_input)
-            st.session_state.result = result
-
-            # Auto-save to memory
+            result     = run_pipeline(st.session_state.raw_input)
             input_type = (
                 "image" if input_mode == "🖼️ Image"
                 else "audio" if input_mode == "🎙️ Audio"
@@ -245,17 +212,13 @@ with left_col:
                 verification   = result["verification"],
                 input_type     = input_type
             )
+            st.session_state.result    = result
             st.session_state.memory_id = mem_id
         st.rerun()
 
-
-# ════════════════════════════════════════════════════════════════════════════
-# RIGHT COLUMN — Results
-# ════════════════════════════════════════════════════════════════════════════
 with right_col:
     if st.session_state.result is None:
         st.info("👈 Enter a problem and click **Solve Problem** to see results here.")
-
     else:
         result       = st.session_state.result
         parsed       = result["parsed_problem"]
@@ -264,7 +227,6 @@ with right_col:
         verification = result["verification"]
         explanation  = result["explanation"]
 
-        # ── MEMORY REUSE INDICATOR ────────────────────────────────────────────
         memory_used = result.get("memory_used", [])
         if memory_used:
             st.success(f"🧠 Memory reused {len(memory_used)} verified past solution(s) to guide this answer")
@@ -272,34 +234,29 @@ with right_col:
                 for m in memory_used:
                     st.markdown(f"""<div class='memory-box'>
                         <b>#{m['id']} [{m['topic'].upper()}]</b> {m['problem_text'][:80]}...<br>
-                        <small>Feedback: ✅ correct | Similarity: {m['similarity_score']:.3f}</small>
+                        <small>✅ Correct | Similarity score: {m['similarity_score']:.3f}</small>
                     </div>""", unsafe_allow_html=True)
 
-        # ── AGENT TRACE ───────────────────────────────────────────────────────
         with st.expander("🔍 Agent Trace", expanded=False):
-            agents_trace = [
+            for name, detail in [
                 ("1 Parser Agent",        f"Topic: {parsed['topic']} | Needs clarification: {parsed['needs_clarification']}"),
                 ("2 Intent Router Agent", f"Subtopic: {routing['subtopic']} | Difficulty: {routing['difficulty']}"),
-                ("3 Solver Agent",        f"Sources used: {', '.join(solution['sources_used'])}"),
+                ("3 Solver Agent",        f"Sources: {', '.join(solution['sources_used'])}"),
                 ("4 Verifier Agent",      f"Correct: {verification['is_correct']} | Confidence: {verification['confidence']:.0%}"),
                 ("5 Explainer Agent",     "Generated student-friendly explanation"),
-            ]
-            for name, detail in agents_trace:
-                st.markdown(
-                    f"<div class='agent-box'>✅ <b>Agent {name}</b><br>{detail}</div>",
-                    unsafe_allow_html=True
-                )
+            ]:
+                st.markdown(f"<div class='agent-box'>✅ <b>Agent {name}</b><br>{detail}</div>", unsafe_allow_html=True)
 
-        # ── RETRIEVED CONTEXT ─────────────────────────────────────────────────
         with st.expander("📚 Retrieved Knowledge Base Sources", expanded=False):
-            for doc in solution["context_docs"]:
-                st.markdown(
-                    f"<div class='source-box'><b>[{doc['topic'].upper()}] {doc['title']}</b>"
-                    f"<br><small>Relevance score: {doc['score']:.2f}</small></div>",
-                    unsafe_allow_html=True
-                )
+            if solution["context_docs"]:
+                for doc in solution["context_docs"]:
+                    st.markdown(
+                        f"<div class='source-box'><b>[{doc['topic'].upper()}] {doc['title']}</b></div>",
+                        unsafe_allow_html=True
+                    )
+            else:
+                st.caption("Answer served from memory — no retrieval needed.")
 
-        # ── CONFIDENCE INDICATOR ──────────────────────────────────────────────
         conf  = verification["confidence"]
         level = "high" if conf >= 0.85 else "med" if conf >= 0.7 else "low"
         label = "High ✅" if conf >= 0.85 else "Medium ⚠️" if conf >= 0.7 else "Low ❌"
@@ -308,32 +265,23 @@ with right_col:
             unsafe_allow_html=True
         )
 
-        # ── HITL TRIGGER ──────────────────────────────────────────────────────
-        if (
-            verification.get("needs_human_review")
-            or parsed.get("needs_clarification")
-            or conf < 0.8
-        ):
+        if verification.get("needs_human_review") or parsed.get("needs_clarification") or conf < 0.8:
             st.markdown("""<div class='hitl-box'>
                 ⚠️ <b>Human Review Requested</b><br>
-                The system is not fully confident. Please review the solution below carefully.
+                The system is not fully confident. Please review the solution carefully.
             </div>""", unsafe_allow_html=True)
 
             if parsed.get("needs_clarification"):
                 st.warning(f"Clarification needed: {parsed.get('clarification_reason', '')}")
-
             if verification.get("issues_found"):
                 st.warning("Issues found: " + ", ".join(verification["issues_found"]))
 
-        # ── PARSED PROBLEM ────────────────────────────────────────────────────
         with st.expander("🧩 Parsed Problem", expanded=False):
             st.json(parsed)
 
-        # ── EXPLANATION ───────────────────────────────────────────────────────
         st.subheader("📖 Solution & Explanation")
         st.markdown(explanation)
 
-        # ── FEEDBACK ─────────────────────────────────────────────────────────
         st.divider()
         st.subheader("💬 Was this solution correct?")
         fb_col1, fb_col2 = st.columns(2)
@@ -342,30 +290,32 @@ with right_col:
             if st.button("✅ Correct", use_container_width=True):
                 if st.session_state.memory_id:
                     update_feedback(st.session_state.memory_id, "correct")
-                st.success("Thanks! Marked as correct ✅")
+                st.success("Marked as correct ✅")
 
         with fb_col2:
             if st.button("❌ Incorrect", use_container_width=True):
-                if st.session_state.memory_id:
-                    update_feedback(st.session_state.memory_id, "incorrect")
-                st.error("Sorry! Marked as incorrect ❌")
+                st.session_state.show_correction_box = True
 
-        comment = st.text_input("Optional comment (e.g. correct answer is 40):")
-        if comment and st.session_state.memory_id:
-            if st.button("💾 Save Comment"):
-                from memory import update_feedback
-                memories = __import__('memory').load_memory()
-                for m in memories:
-                    if m["id"] == st.session_state.memory_id:
-                        m["comment"]          = comment
-                        m["corrected_answer"] = comment
-                        break
-                __import__('memory').save_memory(memories)
-                st.success("Comment saved — will be used as reference for similar problems ✅")
+        if st.session_state.get("show_correction_box", False):
+            st.warning("Please provide the correct answer so the system can learn from this mistake.")
+            correction = st.text_input(
+                "What is the correct answer?",
+                placeholder="e.g. x = 1 and x = -2, so 2 real solutions",
+                key="correction_input"
+            )
+            if st.button("💾 Save Correction", type="primary"):
+                if correction.strip():
+                    if st.session_state.memory_id:
+                        update_feedback(
+                            st.session_state.memory_id,
+                            "incorrect",
+                            user_correction=correction.strip()
+                        )
+                    st.error("Marked as incorrect ❌ — correction saved.")
+                    st.session_state.show_correction_box = False
+                else:
+                    st.warning("Please type the correct answer before saving.")
 
-# ════════════════════════════════════════════════════════════════════════════
-# SIDEBAR — Memory Summary
-# ════════════════════════════════════════════════════════════════════════════
 with st.sidebar:
     st.header("🧠 Memory Summary")
     summary = get_memory_summary()
@@ -375,7 +325,7 @@ with st.sidebar:
     st.metric("Pending Feedback",      summary["pending"])
 
     if summary.get("topics"):
-        st.caption("Topics covered: " + ", ".join(summary["topics"]))
+        st.caption("Topics: " + ", ".join(summary["topics"]))
 
     st.divider()
     st.caption("Math Mentor v1.0")

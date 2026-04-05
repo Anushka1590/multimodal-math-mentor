@@ -1,92 +1,133 @@
-# Math Mentor
-An end-to-end AI application that solves JEE-level math problems using RAG + Multi-Agent System + Memory + Human-in-the-Loop.
+# 🧮 Math Mentor
 
-## Live Demo
-[(https://multimodal-math-mentor-vsyl6zpvj5welkxjsvsejg.streamlit.app/)]
+A JEE-level math problem solver built with a 5-agent pipeline, RAG, and human-in-the-loop correction. Accepts text, image, or audio input and explains solutions step by step.
+
+**Live Demo:** [math-mentor.streamlit.app](https://multimodal-math-mentor-vsyl6zpvj5welkxjsvsejg.streamlit.app/)
+
+---
+
+## What it does
+
+- Accepts a math problem as typed text, a photo of handwritten notes, or a voice recording
+- Routes it through 5 agents: Parser → Intent Router → Solver → Verifier → Explainer
+- Solves using Wolfram Alpha (calculus/algebra), Python+SymPy (probability/implicit differentiation), with RAG context from a curated knowledge base
+- Verifies answers by substituting candidate solutions back into the original equation using SymPy
+- Flags low-confidence answers for human review (HITL)
+- Stores corrections from human feedback and serves them directly on similar future problems
+
+---
 
 ## Architecture
 ```mermaid
 graph TD
-    A[User Input: Text/Image/Audio] --> B[Input Handler]
+    A[User Input: Text / Image / Audio] --> B[Input Handler]
     B --> C[Parser Agent]
     C --> D{Needs Clarification?}
-    D -->|Yes| E[HITL Review]
+    D -->|Yes| E[Human Review - HITL]
     D -->|No| F[Intent Router Agent]
     E --> F
     F --> G[Solver Agent]
-    G --> H[RAG Pipeline - FAISS]
+    G --> H[LangChain RAG - FAISS]
     G --> I[Wolfram Alpha API]
-    G --> J[Python + Sympy Calculator]
+    G --> J[Python + SymPy Calculator]
     H --> G
     I --> G
     J --> G
     G --> K[Verifier Agent]
-    K --> L{Confident?}
-    L -->|No| E
+    K --> L{Answer Valid?}
+    L -->|No - retry| G
+    L -->|No - escalate| E
     L -->|Yes| M[Explainer Agent]
-    M --> N[Final Answer + Explanation]
-    N --> O[Memory Storage]
-    P[User Feedback] --> O
+    M --> N[Final Answer]
+    N --> O[Memory Store]
+    P[User Feedback + Correction] --> O
     O --> G
 ```
 
+---
+
 ## Setup
-1. Clone the repository
-2. Create virtual environment:
+
+**Requirements:** Python 3.10+, free Groq API key, free Wolfram Alpha API key
 ```bash
-   python -m venv venv
-   venv\Scripts\activate
-```
-3. Install dependencies:
-```bash
-   pip install -r requirements.txt
-```
-4. Copy `.env.example` to `.env` and add your key:
-```
-   GROQ_API_KEY=your_groq_api_key_here
-   WOLFRAM_APP_ID=your_wolfram_app_id_here
-```
-5. Build knowledge base index:
-```bash
-   python rag_pipeline.py
-```
-6. Run the app:
-```bash
-   streamlit run app.py
+git clone https://github.com/yourusername/math-mentor
+cd math-mentor
+python -m venv venv
+venv\Scripts\activate        # Windows
+# source venv/bin/activate   # Mac/Linux
+pip install -r requirements.txt
 ```
 
-## Features
-- **Multimodal Input** - Text, Image (OCR via Groq Vision), Audio (Whisper ASR)
-- **5-Agent Pipeline** - Parser, Intent Router, Solver, Verifier, Explainer
-- **Hybrid Computation** - Wolfram Alpha for calculus/algebra, Python for probability, Sympy for implicit differentiation
-- **RAG** - 24-document curated knowledge base with FAISS vector search
-- **Human-in-the-Loop** - triggers on low confidence or ambiguous input
-- **Real Memory Learning** - reuses verified correct past solutions for similar problems
-- **Feedback System** - mark correct/incorrect, save corrections
+Copy `.env.example` to `.env` and fill in your keys:
+```
+GROQ_API_KEY=your_groq_api_key
+WOLFRAM_APP_ID=your_wolfram_app_id
+```
+
+Build the knowledge base index, then run:
+```bash
+python rag_pipeline.py
+streamlit run app.py
+```
+
+---
+
+## Agents
+
+| Agent | Role |
+|---|---|
+| Parser | Cleans OCR/ASR output, structures the problem, flags ambiguity |
+| Intent Router | Classifies topic and subtopic, selects solution strategy |
+| Solver | Hybrid: Wolfram Alpha → Python+SymPy → LLM fallback |
+| Verifier | Substitutes candidates back into original equation via SymPy. LLM-independent for equation problems |
+| Explainer | Produces step-by-step explanation aimed at Class 11-12 level |
+
+---
 
 ## Tech Stack
 
 | Component | Tool |
 |---|---|
-| LLM | Groq (LLaMA 3.3 70B) |
-| Image OCR | Groq Vision (LLaMA 4 Scout) |
+| LLM | Groq - LLaMA 3.3 70B |
+| Image OCR | Groq Vision - LLaMA 4 Scout |
 | Audio ASR | Groq Whisper Large V3 |
-| Computation | Wolfram Alpha API |
-| Symbolic Math | Sympy |
-| RAG | FAISS + sentence-transformers |
-| Embeddings | all-MiniLM-L6-v2 |
-| UI | Streamlit |
+| RAG Framework | LangChain + FAISS |
+| Embeddings | all-MiniLM-L6-v2 (HuggingFace) |
+| Symbolic Math | SymPy |
+| External Computation | Wolfram Alpha API |
 | Memory | FAISS + JSON |
+| UI | Streamlit |
 
-## Agents
-1. **Parser Agent** - Cleans OCR/ASR output, structures problem, detects ambiguity
-2. **Intent Router Agent** - Classifies topic and decides solution strategy
-3. **Solver Agent** - Hybrid: Wolfram Alpha + Python Calculator + Sympy
-4. **Verifier Agent** - Checks correctness, domain constraints, triggers HITL if confidence < 80%
-5. **Explainer Agent** - Produces student-friendly step-by-step explanation
+---
 
-## Math Topics Covered
-- Algebra (quadratics, polynomials, sequences, complex numbers)
-- Probability (classical, Bayes, hypergeometric, binomial)
-- Calculus (limits, derivatives, integration, optimization, implicit differentiation)
-- Linear Algebra (matrices, determinants, eigenvalues, systems of equations)
+## Math Topics
+
+Algebra, Probability, Calculus (limits, derivatives, integration, implicit differentiation), Linear Algebra
+
+---
+
+## Known Limitations
+
+- Complex trigonometric integrals that require non-obvious algebraic simplification before integrating may not solve correctly
+- Probability problem verification uses LLM re-derivation rather than symbolic checking, so confidence scores are less reliable for those problem types
+- Memory correction works best when the follow-up question is phrased similarly to the original
+
+---
+
+## Project Structure
+```
+math_mentor/
+├── app.py                  # Streamlit UI
+├── agents.py               # All 5 agents + pipeline
+├── rag_pipeline.py         # LangChain RAG setup
+├── memory.py               # FAISS-based memory store
+├── calculator.py           # Safe Python code executor
+├── wolfram_solver.py       # Wolfram Alpha integration
+├── input_handlers.py       # OCR and ASR handlers
+├── knowledge_base/
+│   └── math_docs.py        # Curated math knowledge base
+├── data/                   # Generated indexes and memory
+├── .env.example
+├── requirements.txt
+└── packages.txt            # System deps for deployment
+```

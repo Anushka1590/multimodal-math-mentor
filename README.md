@@ -2,7 +2,7 @@
 
 A JEE-level math problem solver built with a 5-agent pipeline, RAG, and human-in-the-loop correction. Accepts text, image, or audio input and explains solutions step by step.
 
-**Live Demo:** [math-mentor.streamlit.app](https://multimodal-math-mentor-vsyl6zpvj5welkxjsvsejg.streamlit.app/)
+**Live Demo:** [math-mentor.streamlit.app]([https://multimodal-math-mentor-vsyl6zpvj5welkxjsvsejg.streamlit.app/](https://multimodal-math-mentor1.streamlit.app/))
 
 ---
 
